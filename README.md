@@ -6,7 +6,7 @@ Code for the AKBC'20 paper -- [A Simple Approach to Case-Based Reasoning in Know
 ### Download the experiment data from [here](http://iesl.cs.umass.edu/downloads/cbr-akbc-data), untar it in the root directory of the project.
 The compressed size is ~401M and uncompressed size is ~716M. 
 ```bash
-wget  http://iesl.cs.umass.edu/downloads/cbr-akbc-data && tar xvf cbr-akbc-data.tar.gz
+wget  http://iesl.cs.umass.edu/downloads/cbr-akbc-data/cbr-akbc-data.tar.gz && tar xvf cbr-akbc-data.tar.gz
 ```
 ```
 cd cbr-akbc-data && export PYTHONPATH=`pwd`
