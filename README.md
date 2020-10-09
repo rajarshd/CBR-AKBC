@@ -1,3 +1,7 @@
+## Note:
+
+Thank you for your interest in our work. Our latest paper on case-based reasoning has better results, so we would also encourage you to checkout / use [that project](https://github.com/ameyagodbole/Prob-CBR) too.
+
 Code for the AKBC'20 paper -- [A Simple Approach to Case-Based Reasoning in Knowledge Bases](https://openreview.net/forum?id=AEY9tRqlU7)
 
 ![CBR](image/teaser.png)
