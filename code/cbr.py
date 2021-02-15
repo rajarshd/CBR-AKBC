@@ -5,7 +5,7 @@ from tqdm import tqdm
 from collections import defaultdict
 import pickle
 import torch
-from code.data.data_utils import create_vocab, load_data, get_unique_entities, \
+from data.data_utils import create_vocab, load_data, get_unique_entities, \
     read_graph, get_entities_group_by_relation, get_inv_relation, load_data_all_triples
 from typing import *
 import logging
