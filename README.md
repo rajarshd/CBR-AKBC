@@ -14,8 +14,9 @@ The compressed size is ~401M and uncompressed size is ~716M.
 ```bash
 wget  http://iesl.cs.umass.edu/downloads/cbr-akbc-data/cbr-akbc-data.tar.gz && tar xvf cbr-akbc-data.tar.gz
 ```
+### Set the pythonpath in root directory of the project
 ```
-cd cbr-akbc-data && export PYTHONPATH=`pwd`
+export PYTHONPATH=`pwd`
 ```
 
 ### To reproduce results from the paper, run the following:
