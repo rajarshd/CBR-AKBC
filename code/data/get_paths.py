@@ -99,6 +99,8 @@ if __name__ == '__main__':
     parser.add_argument("--data_dir", type=str, default="cbr-akbc-data")
     parser.add_argument("--num_paths_to_collect", type=int, default=1000)
     parser.add_argument("--use_wandb", type=int, choices=[0, 1], default=0, help="Set to 1 if using W&B")
+    #//Todo
+    parser.add_argument("--ignore_sequential_inverse", type=int, choices=[0, 1], default=0, help="not sure:" )
     args = parser.parse_args()
 
     if args.use_wandb:
