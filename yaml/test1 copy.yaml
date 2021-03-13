@@ -1,0 +1,47 @@
+
+#--dataset_name WN18RR --k_adj 5 --max_num_programs 25 --max_branch 2 --use_wandb 1 --test
+
+dataset_name:
+  desc: Name of Dataset
+  value: "WN18RR"
+
+data_dir:
+  value: "./cbr-akbc-data/"
+
+save_dir:
+  value: "./experiments/"
+
+subgraph_file_name:
+  value: "paths_1000.pkl"
+
+test:
+  value: False
+
+test_file_name:
+   value: ''
+
+
+print_paths:
+  value: False 
+
+max_num_programs:
+  value: 25
+
+max_branch:
+  value: 2
+
+
+degree_based_sampling:
+  value: True
+
+k_adj:
+  desc: Size of each mini-batch
+  value: 5
+
+use_wandb:
+  value: 1
+
+output_per_relation_scores:
+  value: False
+
+

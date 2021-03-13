@@ -1,0 +1,50 @@
+
+#--dataset_name WN18RR --k_adj 5 --max_num_programs 25 --max_branch 2 --use_wandb 1 --test
+
+experiment_name:
+  value: "MRN"
+
+dataset_name:
+  desc: Name of Dataset
+  value: "MRN"
+
+data_dir:
+  value: "./cbr-akbc-data/"
+
+save_dir:
+  value: "./experiments/"
+
+subgraph_file_name:
+  value: "paths_1000.pkl"
+
+test:
+  value: True
+
+test_file_name:
+   value: ''
+
+
+print_paths:
+  value: False 
+
+max_num_programs:
+  value: 1
+
+max_branch:
+  value: 2
+
+
+degree_based_sampling:
+  value: True
+
+k_adj:
+  desc: Size of each mini-batch
+  value: 50
+
+use_wandb:
+  value: 1
+
+output_per_relation_scores:
+  value: False
+
+
