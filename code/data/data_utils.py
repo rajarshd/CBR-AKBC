@@ -162,3 +162,34 @@ def return_nearest_relation_str(sim_sorted_ind, rev_rel_vocab, rel, k=5):
     print("====Query rel: {}====".format(rev_rel_vocab[rel]))
     nearest_rel_inds = sim_sorted_ind[rel, :k]
     return [rev_rel_vocab[i] for i in nearest_rel_inds]
+
+def get_node_degree(file: str) -> Dict[str, Dict[str, int]] :
+    fin = open(file)
+    degree = {}
+    for line in tqdm(fin):
+        line = line.strip()
+        e1, r, e2 = line.split("\t")
+        if e1 not in degree:
+            degree[e1] = {}
+            degree[e1]["out"] = 1
+            degree[e1]["in"] = 0
+            degree[e1]["total"] = 1
+        else:
+            degree[e1]["out"] += 1
+            degree[e1]["total"] += 1
+        if e2 not in degree:
+            degree[e2] = {}
+            degree[e2]["in"] = 1
+            degree[e2]["out"] = 0
+            degree[e2]["total"] = 1
+        else:
+            degree[e2]["in"] += 1
+            degree[e2]["total"] += 1
+
+    for d in degree:
+        in_degree = degree[d]["in"]
+        out_degree = degree[d]["out"]
+        total_degree = degree[d]["total"]
+        assert (in_degree + out_degree == total_degree), "Error in calculating degree"
+
+    return degree
