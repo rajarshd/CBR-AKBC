@@ -78,6 +78,7 @@ def main(args):
         if paths is None:
             continue
         paths_map[e1] = paths
+        print(f'Got path maps for {e1}')
         if args.use_wandb and ctr % 100 == 0:
             wandb.log({"progress": ctr / len(unique_entities)})
 
@@ -94,14 +95,20 @@ def main(args):
 
 
 if __name__ == '__main__':
+    print("Running get_paths.py")
     parser = argparse.ArgumentParser(description="Collect subgraphs around entities")
     parser.add_argument("--dataset_name", type=str, default="nell")
     parser.add_argument("--data_dir", type=str, default="cbr-akbc-data")
     parser.add_argument("--num_paths_to_collect", type=int, default=1000)
     parser.add_argument("--use_wandb", type=int, choices=[0, 1], default=0, help="Set to 1 if using W&B")
+    #//Todo
+    parser.add_argument("--ignore_sequential_inverse", type=int, choices=[0, 1], default=0, help="not sure:")
+    print("parsed all the arguments")
+
     args = parser.parse_args()
 
     if args.use_wandb:
         wandb.init(project='collect-paths')
+    print("entering into main")
 
     main(args)
