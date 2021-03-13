@@ -12,6 +12,7 @@ import logging
 import json
 import sys
 import wandb
+from datetime import datetime
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -100,7 +101,7 @@ class CBR(object):
             elif len(self.train_map[(e, r)]) == 0:
                 zero_ctr += 1
         self.all_zero_ctr.append(zero_ctr)
-        return all_programs
+        return all_programs, nearest_entities
 
     def rank_programs(self, list_programs: List[str]) -> List[str]:
         """
@@ -135,7 +136,7 @@ class CBR(object):
             answers += self.execute_one_program(e_next, path, depth + 1, max_branch)
         return answers
 
-    def execute_programs(self, e: str, path_list: List[List[str]], max_branch: Optional[int] = 1000) -> List[str]:
+    def execute_programs(self, e: str, path_list: List[List[str]], max_branch: Optional[int] = 20) -> List[str]:
 
         all_answers = []
         not_executed_paths = []
@@ -226,9 +227,15 @@ class CBR(object):
         per_relation_query_count = {}
         total_examples = 0
         learnt_programs = defaultdict(lambda: defaultdict(int))  # for each query relation, a map of programs to count
+
+        save_results = {}
+        save_results["eval_data"] = {}
+
         for _, ((e1, r), e2_list) in enumerate(tqdm((self.eval_map.items()))):
             # if e2_list is in train list then remove them
             # Normally, this shouldnt happen at all, but this happens for Nell-995.
+            save_results["eval_data"][(e1, r)] = {}
+
             orig_train_e2_list = self.train_map[(e1, r)]
             temp_train_e2_list = []
             for e2 in orig_train_e2_list:
@@ -250,7 +257,7 @@ class CBR(object):
                 self.train_map[e2, r_inv] = temp_list
 
             total_examples += len(e2_list)
-            all_programs = self.get_programs_from_nearest_neighbors(e1, r, self.get_nearest_neighbor_inner_product,
+            all_programs, nearest_entities = self.get_programs_from_nearest_neighbors(e1, r, self.get_nearest_neighbor_inner_product,
                                                                     num_nn=self.args.k_adj)
 
             if all_programs is None or len(all_programs) == 0:
@@ -275,7 +282,7 @@ class CBR(object):
 
             num_programs.append(len(all_uniq_programs))
             # Now execute the program
-            answers, not_executed_programs = self.execute_programs(e1, all_uniq_programs)
+            answers, not_executed_programs = self.execute_programs(e1, all_uniq_programs, max_branch=self.args.max_branch)
 
             answers = self.rank_answers(answers)
             if len(answers) > 0:
@@ -304,6 +311,16 @@ class CBR(object):
             self.train_map[(e1, r)] = orig_train_e2_list
             for e2 in e2_list:
                 self.train_map[(e2, r_inv)] = temp_map[(e2, r_inv)]
+
+            save_results["eval_data"][(e1, r)]["nearest_neighbors"] = nearest_entities
+            save_results["eval_data"][(e1, r)]["answers"] = answers
+            save_results["eval_data"][(e1, r)]["paths"] = all_uniq_programs
+
+        save_results["args"] = self.args
+        curr_time = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%p")
+        with open(self.args.save_dir + f'/{self.args.dataset_name}/{self.args.dataset_name}_{curr_time}.pickle', 'wb') as handle:
+            pickle.dump(save_results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+
 
         if args.output_per_relation_scores:
             for r, r_scores in per_relation_scores.items():
@@ -349,15 +366,22 @@ class CBR(object):
                        'avg_num_prog': np.mean(num_programs), 'avg_num_ans': np.mean(num_answers),
                        'avg_num_failed_prog': np.mean(self.num_non_executable_programs), 'acc_loose': np.mean(all_acc)})
 
-
 def main(args):
     dataset_name = args.dataset_name
     logger.info("==========={}============".format(dataset_name))
     data_dir = os.path.join(args.data_dir, "data", dataset_name)
     subgraph_dir = os.path.join(args.data_dir, "subgraphs", dataset_name)
+
+    if not os.path.exists(args.save_dir):
+        os.mkdir(args.save_dir)
+
+    save_dir = os.path.join(args.save_dir, dataset_name)
+    if not os.path.exists(save_dir):
+        os.mkdir(save_dir)
+
     kg_file = os.path.join(data_dir, "graph.txt")
 
-    args.dev_file = os.path.join(data_dir, "dev.txt")
+    args.dev_file = os.path.join(data_dir, "dev_small.txt")
     args.test_file = os.path.join(data_dir, "test.txt") if not args.test_file_name \
         else os.path.join(data_dir, args.test_file_name)
     if args.dataset_name == "FB122":
@@ -441,11 +465,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Collect subgraphs around entities")
     parser.add_argument("--dataset_name", type=str, help="The dataset name. Replace with one of FB122 | WN18RR | NELL-995 to reproduce the results of the paper")
     parser.add_argument("--data_dir", type=str, default="./cbr-akbc-data/")
+    parser.add_argument("--save_dir", type=str, default="./experiments/", help="path to save expriment results")
     parser.add_argument("--subgraph_file_name", type=str,
                         default="paths_1000.pkl")
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--test_file_name", type=str, default='')
     parser.add_argument("--max_num_programs", type=int, default=15, help="Max number of paths to consider")
+    parser.add_argument("--max_branch", type=int, default=20, help="Max number of branch to explore")
     parser.add_argument("--print_paths", action="store_true")
     parser.add_argument("--k_adj", type=int, default=5,
                         help="Number of nearest neighbors to consider based on adjacency matrix")
