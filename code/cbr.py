@@ -6,7 +6,7 @@ from collections import defaultdict
 import pickle
 import torch
 from code.data.data_utils import create_vocab, load_data, get_unique_entities, \
-    read_graph, get_entities_group_by_relation, get_inv_relation, load_data_all_triples
+    read_graph, get_entities_group_by_relation, get_inv_relation, load_data_all_triples, get_node_degree
 from typing import *
 import logging
 import json
@@ -25,10 +25,11 @@ logger.addHandler(ch)
 
 
 class CBR(object):
-    def __init__(self, args, train_map, eval_map, entity_vocab, rev_entity_vocab, rel_vocab, rev_rel_vocab, eval_vocab,
-                 eval_rev_vocab, all_paths, rel_ent_map):
+    def __init__(self, args, all_kg_map, train_map, eval_map, entity_vocab, rev_entity_vocab, rel_vocab, rev_rel_vocab, eval_vocab,
+                 eval_rev_vocab, all_paths, rel_ent_map, graph_node_degree):
         self.args = args
         self.eval_map = eval_map
+        self.all_kg_map = all_kg_map
         self.train_map = train_map
         self.all_zero_ctr = []
         self.all_num_ret_nn = []
@@ -37,6 +38,7 @@ class CBR(object):
         self.all_paths = all_paths
         self.rel_ent_map = rel_ent_map
         self.num_non_executable_programs = []
+        self.graph_node_degree = graph_node_degree
 
     def set_nearest_neighbor_1_hop(self, nearest_neighbor_1_hop):
         self.nearest_neighbor_1_hop = nearest_neighbor_1_hop
@@ -89,7 +91,7 @@ class CBR(object):
         nearest_entities = nn_func(e1, r, k=num_nn)
         if nearest_entities is None:
             self.all_num_ret_nn.append(0)
-            return None
+            return None, nearest_entities
         self.all_num_ret_nn.append(len(nearest_entities))
         zero_ctr = 0
         for e in nearest_entities:
@@ -128,9 +130,19 @@ class CBR(object):
         if len(next_entities) == 0:
             # edge not present
             return []
-        if len(next_entities) > max_branch:
-            # select max_branch random entities
-            next_entities = np.random.choice(next_entities, max_branch, replace=False).tolist()
+
+        if self.args.degree_based_sampling:
+            next_entities_degree = [self.graph_node_degree[e]["total"] for e in next_entities]
+            next_entities_degree_inv = [1 / degree for degree in next_entities_degree]
+            next_entities_degree_inv_norm = [i / sum(next_entities_degree_inv) for i in next_entities_degree_inv]
+            next_entities = np.random.choice(next_entities, min(len(next_entities), max_branch),
+                                             p=next_entities_degree_inv_norm, replace=True).tolist()
+            next_entities = list(set(next_entities))
+        else:
+            if len(next_entities) > max_branch:
+                # select max_branch random entities
+                next_entities = np.random.choice(next_entities, max_branch, replace=False).tolist()
+
         answers = []
         for e_next in next_entities:
             answers += self.execute_one_program(e_next, path, depth + 1, max_branch)
@@ -184,7 +196,7 @@ class CBR(object):
         hits_10 = 0.0
         rr = 0.0
         (e1, r) = query
-        all_gold_answers = self.args.all_kg_map[(e1, r)]
+        all_gold_answers = self.all_kg_map[(e1, r)]
         for gold_answer in gold_answers:
             # remove all other gold answers from prediction
             filtered_answers = []
@@ -234,7 +246,7 @@ class CBR(object):
         for _, ((e1, r), e2_list) in enumerate(tqdm((self.eval_map.items()))):
             # if e2_list is in train list then remove them
             # Normally, this shouldnt happen at all, but this happens for Nell-995.
-            save_results["eval_data"][(e1, r)] = {}
+            save_results["eval_data"][str(e1) + ',' + str(r)] = {}
 
             orig_train_e2_list = self.train_map[(e1, r)]
             temp_train_e2_list = []
@@ -312,14 +324,19 @@ class CBR(object):
             for e2 in e2_list:
                 self.train_map[(e2, r_inv)] = temp_map[(e2, r_inv)]
 
-            save_results["eval_data"][(e1, r)]["nearest_neighbors"] = nearest_entities
-            save_results["eval_data"][(e1, r)]["answers"] = answers
-            save_results["eval_data"][(e1, r)]["paths"] = all_uniq_programs
-
-        save_results["args"] = self.args
+            save_results["eval_data"][str(e1) + ',' + str(r)]["nearest_neighbors"] = nearest_entities
+            save_results["eval_data"][str(e1) + ',' + str(r)]["answers"] = answers
+            save_results["eval_data"][str(e1) + ',' + str(r)]["paths"] = all_uniq_programs
+        print(type(self.args))
+        print(self.args)
+        save_results["args"] = dict(self.args)
         curr_time = datetime.now().strftime("%Y_%m_%d-%I_%M_%S_%p")
-        with open(self.args.save_dir + f'/{self.args.dataset_name}/{self.args.dataset_name}_{curr_time}.pickle', 'wb') as handle:
-            pickle.dump(save_results, handle, protocol=pickle.HIGHEST_PROTOCOL)
+        # wandb.save(os.path.join(self.args.final_path, "save_results"))
+        print(type(save_results))
+        with open(os.path.join(self.args.final_path, f'summary.json'), 'w') as fp:
+            json.dump(save_results, fp, indent=4, sort_keys=True)
+        # with open(os.path.join(self.args.final_path, f'summary.pickle'), 'wb') as handle:
+        #     pickle.dump(save_results, handle)
 
 
         if args.output_per_relation_scores:
@@ -359,6 +376,7 @@ class CBR(object):
                 logger.info("=====" * 2)
         if self.args.use_wandb:
             # Log all metrics
+            # wandb.save(save_results)
             wandb.log({'hits_1': hits_1 / total_examples, 'hits_3': hits_3 / total_examples,
                        'hits_5': hits_5 / total_examples, 'hits_10': hits_10 / total_examples,
                        'mrr': mrr / total_examples, 'total_examples': total_examples, 'non_zero_ctr': non_zero_ctr,
@@ -394,6 +412,8 @@ def main(args):
         all_paths = pickle.load(fin)
 
     entity_vocab, rev_entity_vocab, rel_vocab, rev_rel_vocab = create_vocab(kg_file)
+    graph_node_degree = get_node_degree(kg_file)
+
     logger.info("Loading train map")
     train_map = load_data(kg_file)
     logger.info("Loading dev map")
@@ -439,14 +459,13 @@ def main(args):
         e_ctr += 1
 
     logger.info("=========Config:============")
-    logger.info(json.dumps(vars(args), indent=4, sort_keys=True))
+    logger.info(json.dumps(vars(args)["_items"], indent=4, sort_keys=True))
 
     logger.info("Loading combined train/dev/test map for filtered eval")
     all_kg_map = load_data_all_triples(args.train_file, args.dev_file, args.test_file)
-    args.all_kg_map = all_kg_map
-
-    symbolically_smart_agent = CBR(args, train_map, eval_map, entity_vocab, rev_entity_vocab, rel_vocab,
-                                                 rev_rel_vocab, eval_vocab, eval_rev_vocab, all_paths, rel_ent_map)
+    # args.all_kg_map = all_kg_map
+    symbolically_smart_agent = CBR(args, all_kg_map, train_map, eval_map, entity_vocab, rev_entity_vocab, rel_vocab,
+                                                 rev_rel_vocab, eval_vocab, eval_rev_vocab, all_paths, rel_ent_map, graph_node_degree)
 
     query_ind = torch.LongTensor(query_ind).to(device)
     # Calculate similarity
@@ -473,13 +492,24 @@ if __name__ == '__main__':
     parser.add_argument("--max_num_programs", type=int, default=15, help="Max number of paths to consider")
     parser.add_argument("--max_branch", type=int, default=20, help="Max number of branch to explore")
     parser.add_argument("--print_paths", action="store_true")
+    parser.add_argument("--degree_based_sampling", action="store_true")
     parser.add_argument("--k_adj", type=int, default=5,
                         help="Number of nearest neighbors to consider based on adjacency matrix")
-    parser.add_argument("--use_wandb", type=int, choices=[0, 1], default=0, help="Set to 1 if using W&B")
+    parser.add_argument("--use_wandb", type=int, choices=[0, 1], default=1, help="Set to 0 if not using W&B")
     parser.add_argument("--output_per_relation_scores", action="store_true")
 
     args = parser.parse_args()
     logger.info('COMMAND: %s' % ' '.join(sys.argv))
     if args.use_wandb:
-        wandb.init(project='case-based-reasoning')
-    main(args)
+        wandb.init(project='case-based-reasoning',
+                   config='yaml/run.yaml')
+        wandb.config.update({"final_path":wandb.run.dir})
+        args = wandb.config
+        wandb.run.name = args.experiment_name
+        # wandb.run.group = args.dataset_name
+
+        main(args)
+    else:
+        print(args)
+        print(vars(args))
+        main(args)
