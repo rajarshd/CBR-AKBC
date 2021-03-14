@@ -1,0 +1,49 @@
+
+# #--dataset_name WN18RR --k_adj 5 --max_num_programs 25 --max_branch 2 --use_wandb 1 --test
+project: "CBR-Vanilla-MRN"
+name: "Exhaustive hyperparameter search"
+decription: "Find best hyperparameters"
+program: code/cbr.py
+method: grid
+metric:
+  goal: maximize
+  name: mrr
+parameters:
+  k_adj:
+    values: [5, 10, 100]
+  max_branch:
+    values: [10, 100, 1000]
+
+  max_num_programs:
+    values: [5, 10, 100]
+
+  dataset_name:
+    desc: Name of Dataset
+    value: "MRN"
+
+  data_dir:
+    value: "./cbr-akbc-data/"
+
+  save_dir:
+    value: "./experiments/"
+
+  subgraph_file_name:
+    values: ["paths_1000_len_3.pkl"] #, "paths_1000_len_5.pkl"]
+
+  test:
+    value: True
+
+  test_file_name:
+     value: "" #"disease_compound.txt"
+#
+  degree_based_sampling:
+    values: [True, False]
+
+#  print_paths:
+#    value: False
+
+  use_wandb:
+    value: 1
+
+#  output_per_relation_scores:
+#    value: False
