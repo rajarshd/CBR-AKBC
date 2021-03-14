@@ -325,7 +325,7 @@ class CBR(object):
                 self.train_map[(e2, r_inv)] = temp_map[(e2, r_inv)]
 
             save_results["eval_data"][str(e1) + ',' + str(r)]["nearest_neighbors"] = nearest_entities
-            save_results["eval_data"][str(e1) + ',' + str(r)]["answers"] = answers
+            # save_results["eval_data"][str(e1) + ',' + str(r)]["answers"] = answers
             save_results["eval_data"][str(e1) + ',' + str(r)]["paths"] = all_uniq_programs
         print(type(self.args))
         print(self.args)
@@ -486,30 +486,40 @@ if __name__ == '__main__':
     parser.add_argument("--data_dir", type=str, default="./cbr-akbc-data/")
     parser.add_argument("--save_dir", type=str, default="./experiments/", help="path to save expriment results")
     parser.add_argument("--subgraph_file_name", type=str,
-                        default="paths_1000.pkl")
-    parser.add_argument("--test", action="store_true")
+                        default="paths_1000_len_3.pkl")
+    # parser.add_argument("--test", action="store_true")
+    parser.add_argument("--test", default=False, help="Evaluate on test dataset")
     parser.add_argument("--test_file_name", type=str, default='')
     parser.add_argument("--max_num_programs", type=int, default=15, help="Max number of paths to consider")
     parser.add_argument("--max_branch", type=int, default=20, help="Max number of branch to explore")
-    parser.add_argument("--print_paths", action="store_true")
-    parser.add_argument("--degree_based_sampling", action="store_true")
+    # parser.add_argument("--print_paths", action="store_true")
+    parser.add_argument("--print_paths", default=False, help="whether to print paths after execution")
+    # parser.add_argument("--degree_based_sampling", action="store_true")
+    parser.add_argument("--degree_based_sampling", default=False, help="Sample nodes based on inverse of degree nodes")
     parser.add_argument("--k_adj", type=int, default=5,
                         help="Number of nearest neighbors to consider based on adjacency matrix")
     parser.add_argument("--use_wandb", type=int, choices=[0, 1], default=1, help="Set to 0 if not using W&B")
-    parser.add_argument("--output_per_relation_scores", action="store_true")
+    # parser.add_argument("--output_per_relation_scores", action="store_true")
+    parser.add_argument("--output_per_relation_scores", default=False)
+
 
     args = parser.parse_args()
     logger.info('COMMAND: %s' % ' '.join(sys.argv))
+    print("args outside the loop")
+    print(args)
     if args.use_wandb:
         wandb.init(project='case-based-reasoning',
                    config='yaml/run.yaml')
         wandb.config.update({"final_path":wandb.run.dir})
         args = wandb.config
-        wandb.run.name = args.experiment_name
+        # wandb.run.name = args.experiment_name
         # wandb.run.group = args.dataset_name
+        print("wandb args")
+        print(args)
 
         main(args)
     else:
+        print("no wandb")
         print(args)
-        print(vars(args))
+        # print(vars(args))
         main(args)
