@@ -1,8 +1,9 @@
 from tqdm import tqdm
 from collections import defaultdict
+import json
 import numpy as np
 import tempfile
-from typing import DefaultDict, List, Tuple, Dict, Set
+from typing import List, Tuple, Dict, Set
 
 
 
@@ -29,7 +30,7 @@ def augment_kb_with_inv_edges(file_name: str) -> None:
     o.close()
 
 
-def create_adj_list(file_name: str) -> DefaultDict[str, Tuple[str, str]]:
+def create_adj_list(file_name: str):
     out_map = defaultdict(list)
     fin = open(file_name)
     for line_ctr, line in tqdm(enumerate(fin)):
@@ -39,7 +40,7 @@ def create_adj_list(file_name: str) -> DefaultDict[str, Tuple[str, str]]:
     return out_map
 
 
-def load_data(file_name: str) -> DefaultDict[Tuple[str, str], list]:
+def load_data(file_name: str):
     out_map = defaultdict(list)
     fin = open(file_name)
 
@@ -50,7 +51,33 @@ def load_data(file_name: str) -> DefaultDict[Tuple[str, str], list]:
 
     return out_map
 
-def load_data_all_triples(train_file: str, dev_file: str, test_file: str) -> DefaultDict[Tuple[str, str], list]:
+
+class Query:
+    def __init__(self, e1, q, knn_ids, ans_list):
+        self.e1 = e1
+        self.q = q
+        self.knn_ids = knn_ids
+        self.ans_e = ans_list
+
+
+def load_dset(file_name: str):
+    dset = []
+    dset_list = json.load(open(file_name))
+
+    for query in tqdm(dset_list):
+        assert len(query["seed_entities"]) >= 1
+        s_e = query["seed_entities"][0]
+        if len(query["seed_entities"]) > 1:
+            for s_e_cand in query["seed_entities"]:
+                if s_e_cand.lower() != s_e_cand:
+                    s_e = s_e_cand
+                    break
+        dset.append(Query(s_e, query["question"], query["knn"], query["answer"]))
+
+    return dset
+
+
+def load_data_all_triples(train_file: str, dev_file: str, test_file: str):
     """
     Returns a map of all triples in the knowledge graph. Use this map only for filtering in evaluation.
     :param train_file:
@@ -104,7 +131,7 @@ def read_graph(file_name: str, entity_vocab: Dict[str, int], rel_vocab: Dict[str
 
 
 
-def load_mid2str(mid2str_file: str) -> DefaultDict[str, str]:
+def load_mid2str(mid2str_file: str):
     mid2str = defaultdict(str)
     with open(mid2str_file) as fin:
         for line in tqdm(fin):
@@ -129,7 +156,7 @@ def get_unique_entities(kg_file: str) -> Set[str]:
     return unique_entities
 
 
-def get_entities_group_by_relation(file_name: str) -> DefaultDict[str, List[str]]:
+def get_entities_group_by_relation(file_name: str):
     rel_to_ent_map = defaultdict(list)
     fin = open(file_name)
     for line in fin:
@@ -139,7 +166,7 @@ def get_entities_group_by_relation(file_name: str) -> DefaultDict[str, List[str]
 
 
 def get_inv_relation(r: str, dataset_name="nell") -> str:
-    if dataset_name == "nell":
+    if dataset_name == "nell" or dataset_name.startswith("metaqa"):
         if r[-4:] == "_inv":
             return r[:-4]
         else:

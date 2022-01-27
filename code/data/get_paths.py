@@ -2,7 +2,7 @@ from tqdm import tqdm
 from collections import defaultdict
 import os
 import numpy as np
-from data_utils import create_vocab, load_data, load_mid2str, get_unique_entities, create_adj_list, get_inv_relation
+from code.data.data_utils import create_vocab, load_data, load_mid2str, get_unique_entities, create_adj_list, get_inv_relation
 import time
 import pickle
 import argparse
@@ -10,14 +10,14 @@ import json
 import wandb
 import logging
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-formatter = logging.Formatter("[%(asctime)s \t %(message)s]",
-                              "%Y-%m-%d %H:%M:%S")
-ch.setFormatter(formatter)
-logger.addHandler(ch)
+# logger = logging.getLogger()
+# logger.setLevel(logging.INFO)
+# ch = logging.StreamHandler()
+# ch.setLevel(logging.INFO)
+# formatter = logging.Formatter("[%(asctime)s \t %(message)s]",
+#                               "%Y-%m-%d %H:%M:%S")
+# ch.setFormatter(formatter)
+# logger.addHandler(ch)
 
 
 def get_paths(args, train_adj_list, start_node, max_len=3):
