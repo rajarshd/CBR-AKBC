@@ -19,7 +19,6 @@ shortuuid==1.0.1
 six==1.15.0
 smmap==3.0.5
 subprocess32==3.5.4
-torch==1.7.1
 tqdm==4.56.2
 typing-extensions==3.7.4.3
 urllib3==1.26.3

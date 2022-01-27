@@ -4,9 +4,8 @@ import os
 from tqdm import tqdm
 from collections import defaultdict
 import pickle
-import torch
-from code.data.data_utils import create_vocab, load_data, get_unique_entities, \
-    read_graph, get_entities_group_by_relation, get_inv_relation, load_data_all_triples
+from code.data.data_utils import get_inv_relation
+from code.data.get_paths import get_paths
 from typing import *
 import logging
 import json
@@ -24,52 +23,16 @@ logger.addHandler(ch)
 
 
 class CBR(object):
-    def __init__(self, args, train_map, eval_map, entity_vocab, rev_entity_vocab, rel_vocab, rev_rel_vocab, eval_vocab,
-                 eval_rev_vocab, all_paths, rel_ent_map):
+    def __init__(self, args, train_dset, dev_dset, test_dset):
         self.args = args
-        self.eval_map = eval_map
-        self.train_map = train_map
-        self.all_zero_ctr = []
-        self.all_num_ret_nn = []
-        self.entity_vocab, self.rev_entity_vocab, self.rel_vocab, self.rev_rel_vocab = entity_vocab, rev_entity_vocab, rel_vocab, rev_rel_vocab
-        self.eval_vocab, self.eval_rev_vocab = eval_vocab, eval_rev_vocab
-        self.all_paths = all_paths
-        self.rel_ent_map = rel_ent_map
-        self.num_non_executable_programs = []
+        self.train_dset, self.dev_dset, self.test_dset = train_dset, dev_dset, test_dset
+        self.train_qid2idx = {ex["id"]: ex_ctr for ex_ctr, ex in enumerate(self.train_dset)}
+        self.dev_qid2idx = {ex["id"]: ex_ctr for ex_ctr, ex in enumerate(self.dev_dset)}
+        self.test_qid2idx = {ex["id"]: ex_ctr for ex_ctr, ex in enumerate(self.test_dset)}
+        self.train_paths_map = {}
 
-    def set_nearest_neighbor_1_hop(self, nearest_neighbor_1_hop):
-        self.nearest_neighbor_1_hop = nearest_neighbor_1_hop
-
-    @staticmethod
-    def calc_sim(adj_mat: Type[torch.Tensor], query_entities: Type[torch.LongTensor]) -> Type[torch.LongTensor]:
-        """
-        :param adj_mat: N X R
-        :param query_entities: b is a batch of indices of query entities
-        :return:
-        """
-        query_entities_vec = torch.index_select(adj_mat, dim=0, index=query_entities)
-        sim = torch.matmul(query_entities_vec, torch.t(adj_mat))
-        return sim
-
-    def get_nearest_neighbor_inner_product(self, e1: str, r: str, k: Optional[int] = 5) -> List[str]:
-        try:
-            nearest_entities = [self.rev_entity_vocab[e] for e in
-                                self.nearest_neighbor_1_hop[self.eval_vocab[e1]].tolist()]
-            # remove e1 from the set of k-nearest neighbors if it is there.
-            nearest_entities = [nn for nn in nearest_entities if nn != e1]
-            # making sure, that the similar entities also have the query relation
-            ctr = 0
-            temp = []
-            for nn in nearest_entities:
-                if ctr == k:
-                    break
-                if len(self.train_map[nn, r]) > 0:
-                    temp.append(nn)
-                    ctr += 1
-            nearest_entities = temp
-        except KeyError:
-            return None
-        return nearest_entities
+    def set_paths_map(self, paths_map):
+        self.train_paths_map = paths_map
 
     def get_programs(self, e: str, ans: str, all_paths_around_e: List[List[str]]):
         """
@@ -83,23 +46,34 @@ class CBR(object):
                     all_programs.append([x for (x, _) in path[:l + 1]])  # we only need to keep the relations
         return all_programs
 
-    def get_programs_from_nearest_neighbors(self, e1: str, r: str, nn_func: Callable, num_nn: Optional[int] = 5):
+    @staticmethod
+    def create_full_adj_list(adj_map, add_inverse_edges=True):
+        adj_list_map = {}
+        for e1_, re2_map_ in adj_map.items():
+            for r_, e2_list_ in re2_map_.items():
+                r_inv_ = get_inv_relation(r_)
+                for e2_ in e2_list_:
+                    adj_list_map.setdefault(e1_, []).append((r_, e2_))
+                    if add_inverse_edges:
+                        adj_list_map.setdefault(e2_, []).append((r_inv_, e1_))
+        for e1_ in adj_list_map.keys():
+            adj_list_map[e1_] = list(set(adj_list_map[e1_]))
+        return adj_list_map
+
+    def get_programs_from_nearest_neighbors(self, query, seed_idx, num_nn: Optional[int] = 5):
         all_programs = []
-        nearest_entities = nn_func(e1, r, k=num_nn)
-        if nearest_entities is None:
-            self.all_num_ret_nn.append(0)
-            return None
-        self.all_num_ret_nn.append(len(nearest_entities))
-        zero_ctr = 0
-        for e in nearest_entities:
-            if len(self.train_map[(e, r)]) > 0:
-                paths_e = self.all_paths[e]  # get the collected 3 hop paths around e
-                nn_answers = self.train_map[(e, r)]
-                for nn_ans in nn_answers:
-                    all_programs += self.get_programs(e, nn_ans, paths_e)
-            elif len(self.train_map[(e, r)]) == 0:
-                zero_ctr += 1
-        self.all_zero_ctr.append(zero_ctr)
+        nearest_queries = query["knn"][:num_nn]
+        for knn_qid in nearest_queries:
+            knn_query = self.train_dset[self.train_qid2idx[knn_qid]]
+            if (knn_qid, seed_idx) not in self.train_paths_map:
+                knn_adj_list = self.create_full_adj_list(knn_query["graph"]["adj_map"],
+                                                         (self.args.add_inverse_edges_to_subg==1))
+                paths_e = get_paths(args, knn_adj_list, knn_query["seed_entities"][seed_idx], max_len=3)
+                self.train_paths_map[(knn_qid, seed_idx)] = paths_e
+            else:
+                paths_e = self.train_paths_map[(knn_qid, seed_idx)]
+            for nn_ans in knn_query["answer"]:
+                all_programs += self.get_programs(knn_query["seed_entities"][seed_idx], nn_ans, paths_e)
         return all_programs
 
     def rank_programs(self, list_programs: List[str]) -> List[str]:
@@ -111,10 +85,10 @@ class CBR(object):
         for p in list_programs:
             count_map[tuple(p)] += 1
         sorted_programs = sorted(count_map.items(), key=lambda kv: -kv[1])
-        sorted_programs = [k for (k, v) in sorted_programs]
+        sorted_programs = [list(k) for (k, v) in sorted_programs]
         return sorted_programs
 
-    def execute_one_program(self, e: str, path: List[str], depth: int, max_branch: int):
+    def execute_one_program(self, query, e: str, path: List[str], depth: int, max_branch: int):
         """
         starts from an entity and executes the path by doing depth first search. If there are multiple edges with the same label, we consider
         max_branch number.
@@ -122,8 +96,10 @@ class CBR(object):
         if depth == len(path):
             # reached end, return node
             return [e]
-        next_rel = path[depth]
-        next_entities = self.train_map[(e, path[depth])]
+        try:
+            next_entities = query["graph"]["adj_map"][e][path[depth]]
+        except KeyError:
+            next_entities = []
         if len(next_entities) == 0:
             # edge not present
             return []
@@ -132,11 +108,10 @@ class CBR(object):
             next_entities = np.random.choice(next_entities, max_branch, replace=False).tolist()
         answers = []
         for e_next in next_entities:
-            answers += self.execute_one_program(e_next, path, depth + 1, max_branch)
+            answers += self.execute_one_program(query, e_next, path, depth + 1, max_branch)
         return answers
 
-    def execute_programs(self, e: str, path_list: List[List[str]], max_branch: Optional[int] = 1000) -> List[str]:
-
+    def execute_programs(self, query, e: str, path_list: List[List[str]], max_branch: int = 1000):
         all_answers = []
         not_executed_paths = []
         execution_fail_counter = 0
@@ -144,7 +119,7 @@ class CBR(object):
         for path in path_list:
             if executed_path_counter == self.args.max_num_programs:
                 break
-            ans = self.execute_one_program(e, path, depth=0, max_branch=max_branch)
+            ans = self.execute_one_program(query, e, path, depth=0, max_branch=max_branch)
             if ans == []:
                 not_executed_paths.append(path)
                 execution_fail_counter += 1
@@ -152,8 +127,7 @@ class CBR(object):
                 executed_path_counter += 1
             all_answers += ans
 
-        self.num_non_executable_programs.append(execution_fail_counter)
-        return all_answers, not_executed_paths
+        return all_answers, not_executed_paths, execution_fail_counter
 
     def rank_answers(self, list_answers: List[str]) -> List[str]:
         """
@@ -176,19 +150,17 @@ class CBR(object):
                 return i + 1
         return -1
 
-    def get_hits(self, list_answers: List[str], gold_answers: List[str], query: Tuple[str, str]) -> Tuple[float, float, float, float]:
+    def get_hits(self, list_answers: List[str], gold_answers: List[str]) -> Tuple[float, float, float, float, float]:
         hits_1 = 0.0
         hits_3 = 0.0
         hits_5 = 0.0
         hits_10 = 0.0
         rr = 0.0
-        (e1, r) = query
-        all_gold_answers = self.args.all_kg_map[(e1, r)]
         for gold_answer in gold_answers:
             # remove all other gold answers from prediction
             filtered_answers = []
             for pred in list_answers:
-                if pred in all_gold_answers and pred != gold_answer:
+                if pred in gold_answers and pred != gold_answer:
                     continue
                 else:
                     filtered_answers.append(pred)
@@ -216,94 +188,83 @@ class CBR(object):
                 all_acc.append(0.0)
         return all_acc
 
-    def do_symbolic_case_based_reasoning(self):
+    def do_symbolic_case_based_reasoning(self, do_predict=False):
         num_programs = []
         num_answers = []
+        num_non_executable_programs = []
         all_acc = []
         non_zero_ctr = 0
         hits_10, hits_5, hits_3, hits_1, mrr = 0.0, 0.0, 0.0, 0.0, 0.0
+        weak_hits_10, weak_hits_5, weak_hits_3, weak_hits_1 = 0.0, 0.0, 0.0, 0.0
         per_relation_scores = {}  # map of performance per relation
         per_relation_query_count = {}
-        total_examples = 0
+        if do_predict:
+            logger.info("Running on test set")
+            eval_dset = self.test_dset
+        else:
+            logger.info("Running on dev set")
+            eval_dset = self.dev_dset
+
         learnt_programs = defaultdict(lambda: defaultdict(int))  # for each query relation, a map of programs to count
-        for _, ((e1, r), e2_list) in enumerate(tqdm((self.eval_map.items()))):
-            # if e2_list is in train list then remove them
-            # Normally, this shouldnt happen at all, but this happens for Nell-995.
-            orig_train_e2_list = self.train_map[(e1, r)]
-            temp_train_e2_list = []
-            for e2 in orig_train_e2_list:
-                if e2 in e2_list:
+        # import pdb; pdb.set_trace()
+        for eval_query in tqdm(eval_dset):
+            non_zero_ctr_for_query, num_programs_for_query, not_executed_programs_for_query = 0, 0, 0
+            answers = []
+            for seed_id, se in enumerate(eval_query["seed_entities"]):
+                all_programs = self.get_programs_from_nearest_neighbors(eval_query, seed_id, num_nn=self.args.k_adj)
+
+                if all_programs is None or len(all_programs) == 0:
                     continue
-                temp_train_e2_list.append(e2)
-            self.train_map[(e1, r)] = temp_train_e2_list
-            # also remove (e2, r^-1, e1)
-            r_inv = get_inv_relation(r, args.dataset_name)
-            temp_map = {}  # map from (e2, r_inv) -> outgoing nodes
-            for e2 in e2_list:
-                temp_map[(e2, r_inv)] = self.train_map[e2, r_inv]
-                temp_list = []
-                for e1_dash in self.train_map[e2, r_inv]:
-                    if e1_dash == e1:
-                        continue
-                    else:
-                        temp_list.append(e1_dash)
-                self.train_map[e2, r_inv] = temp_list
 
-            total_examples += len(e2_list)
-            all_programs = self.get_programs_from_nearest_neighbors(e1, r, self.get_nearest_neighbor_inner_product,
-                                                                    num_nn=self.args.k_adj)
+                if len(all_programs) > 0:
+                    non_zero_ctr_for_query += 1
 
-            if all_programs is None or len(all_programs) == 0:
-                all_acc.append(0.0)
-                continue
+                all_uniq_programs = self.rank_programs(all_programs)
 
-            # filter the program if it is equal to the query relation
-            temp = []
-            for p in all_programs:
-                if len(p) == 1 and p[0] == r:
-                    continue
-                temp.append(p)
-            all_programs = temp
+                num_programs_for_query += len(all_uniq_programs)
+                # Now execute the program
+                answers_for_seed, _, not_executed_programs_for_seed = self.execute_programs(eval_query, se,
+                                                                                            all_uniq_programs)
+                answers.extend(answers_for_seed)
+                not_executed_programs_for_query += not_executed_programs_for_seed
 
-            if len(all_programs) > 0:
-                non_zero_ctr += len(e2_list)
-
-            all_uniq_programs = self.rank_programs(all_programs)
-
-            for u_p in all_uniq_programs:
-                learnt_programs[r][u_p] += 1
-
-            num_programs.append(len(all_uniq_programs))
-            # Now execute the program
-            answers, not_executed_programs = self.execute_programs(e1, all_uniq_programs)
-
+            num_programs.append(num_programs_for_query)
+            num_non_executable_programs.append(not_executed_programs_for_query)
+            non_zero_ctr += 1 if non_zero_ctr_for_query > 0 else 0
             answers = self.rank_answers(answers)
+
+            r = eval_query["pattern_type"]
+            if r not in per_relation_scores:
+                per_relation_scores[r] = {"hits_1": 0, "hits_3": 0, "hits_5": 0, "hits_10": 0, "mrr": 0,
+                                          "weak_hits_1": 0, "weak_hits_3": 0, "weak_hits_5": 0, "weak_hits_10": 0}
+                per_relation_query_count[r] = 0
+            per_relation_query_count[r] += 1
             if len(answers) > 0:
-                acc = self.get_accuracy(e2_list, [k[0] for k in answers])
-                _10, _5, _3, _1, rr = self.get_hits([k[0] for k in answers], e2_list, query=(e1, r))
-                hits_10 += _10
-                hits_5 += _5
-                hits_3 += _3
-                hits_1 += _1
-                mrr += rr
+                acc = np.mean(self.get_accuracy(eval_query["answer"], [k[0] for k in answers]))
+                _10, _5, _3, _1, rr = self.get_hits([k[0] for k in answers], eval_query["answer"])
+                hits_10 += _10 / len(eval_query["answer"])
+                hits_5 += _5 / len(eval_query["answer"])
+                hits_3 += _3 / len(eval_query["answer"])
+                hits_1 += _1 / len(eval_query["answer"])
+                mrr += rr / len(eval_query["answer"])
+                weak_hits_10 += 1.0 if _10 > 0 else 0.0
+                weak_hits_5 += 1.0 if _5 > 0 else 0.0
+                weak_hits_3 += 1.0 if _3 > 0 else 0.0
+                weak_hits_1 += 1.0 if _1 > 0 else 0.0
                 if args.output_per_relation_scores:
-                    if r not in per_relation_scores:
-                        per_relation_scores[r] = {"hits_1": 0, "hits_3": 0, "hits_5": 0, "hits_10": 0, "mrr": 0}
-                        per_relation_query_count[r] = 0
-                    per_relation_scores[r]["hits_1"] += _1
-                    per_relation_scores[r]["hits_3"] += _3
-                    per_relation_scores[r]["hits_5"] += _5
-                    per_relation_scores[r]["hits_10"] += _10
-                    per_relation_scores[r]["mrr"] += rr
-                    per_relation_query_count[r] += len(e2_list)
+                    per_relation_scores[r]["hits_1"] += _1 / len(eval_query["answer"])
+                    per_relation_scores[r]["hits_3"] += _3 / len(eval_query["answer"])
+                    per_relation_scores[r]["hits_5"] += _5 / len(eval_query["answer"])
+                    per_relation_scores[r]["hits_10"] += _10 / len(eval_query["answer"])
+                    per_relation_scores[r]["mrr"] += rr / len(eval_query["answer"])
+                    per_relation_scores[r]["weak_hits_1"] += 1.0 if _1 > 0 else 0.0
+                    per_relation_scores[r]["weak_hits_3"] += 1.0 if _3 > 0 else 0.0
+                    per_relation_scores[r]["weak_hits_5"] += 1.0 if _5 > 0 else 0.0
+                    per_relation_scores[r]["weak_hits_10"] += 1.0 if _10 > 0 else 0.0
             else:
-                acc = [0.0] * len(e2_list)
-            all_acc += acc
+                acc = 0.0
+            all_acc.append(acc)
             num_answers.append(len(answers))
-            # put it back
-            self.train_map[(e1, r)] = orig_train_e2_list
-            for e2 in e2_list:
-                self.train_map[(e2, r_inv)] = temp_map[(e2, r_inv)]
 
         if args.output_per_relation_scores:
             for r, r_scores in per_relation_scores.items():
@@ -312,27 +273,38 @@ class CBR(object):
                 r_scores["hits_5"] /= per_relation_query_count[r]
                 r_scores["hits_10"] /= per_relation_query_count[r]
                 r_scores["mrr"] /= per_relation_query_count[r]
+                r_scores["weak_hits_1"] /= per_relation_query_count[r]
+                r_scores["weak_hits_3"] /= per_relation_query_count[r]
+                r_scores["weak_hits_5"] /= per_relation_query_count[r]
+                r_scores["weak_hits_10"] /= per_relation_query_count[r]
+            if not os.path.exists(args.output_dir):
+                os.makedirs(args.output_dir)
             out_file_name = os.path.join(args.output_dir, "per_relation_scores.json")
-            fout = open(out_file_name, "w")
-            logger.info("Writing per-relation scores to {}".format(out_file_name))
-            fout.write(json.dumps(per_relation_scores, sort_keys=True, indent=4))
-            fout.close()
+            with open(out_file_name, "w") as fout:
+                logger.info("Writing per-relation scores to {}".format(out_file_name))
+                fout.write(json.dumps(per_relation_scores, sort_keys=True, indent=4))
+            out_file_name = os.path.join(args.output_dir, "per_relation_query_count.json")
+            with open(out_file_name, "w") as fout:
+                logger.info("Writing per-relation query counts to {}".format(out_file_name))
+                fout.write(json.dumps(per_relation_query_count, sort_keys=True, indent=4))
 
+        total_examples = len(eval_dset)
         logger.info(
             "Out of {} queries, atleast one program was returned for {} queries".format(total_examples, non_zero_ctr))
         logger.info("Avg number of programs {:3.2f}".format(np.mean(num_programs)))
         logger.info("Avg number of answers after executing the programs: {}".format(np.mean(num_answers)))
         logger.info("Accuracy (Loose): {}".format(np.mean(all_acc)))
+        logger.info("Weak Hits@1 {}".format(weak_hits_1 / total_examples))
+        logger.info("Weak Hits@3 {}".format(weak_hits_3 / total_examples))
+        logger.info("Weak Hits@5 {}".format(weak_hits_5 / total_examples))
+        logger.info("Weak Hits@10 {}".format(weak_hits_10 / total_examples))
         logger.info("Hits@1 {}".format(hits_1 / total_examples))
         logger.info("Hits@3 {}".format(hits_3 / total_examples))
         logger.info("Hits@5 {}".format(hits_5 / total_examples))
         logger.info("Hits@10 {}".format(hits_10 / total_examples))
         logger.info("MRR {}".format(mrr / total_examples))
-        logger.info("Avg number of nn, that do not have the query relation: {}".format(
-            np.mean(self.all_zero_ctr)))
-        logger.info("Avg num of returned nearest neighbors: {:2.4f}".format(np.mean(self.all_num_ret_nn)))
         logger.info("Avg number of programs that do not execute per query: {:2.4f}".format(
-            np.mean(self.num_non_executable_programs)))
+            np.mean(num_non_executable_programs)))
         if self.args.print_paths:
             for k, v in learnt_programs.items():
                 logger.info("query: {}".format(k))
@@ -342,107 +314,55 @@ class CBR(object):
                 logger.info("=====" * 2)
         if self.args.use_wandb:
             # Log all metrics
-            wandb.log({'hits_1': hits_1 / total_examples, 'hits_3': hits_3 / total_examples,
+            wandb.log({'weak_hits_1': weak_hits_1 / total_examples, 'weak_hits_3': weak_hits_3 / total_examples,
+                       'weak_hits_5': weak_hits_5 / total_examples, 'weak_hits_10': weak_hits_10 / total_examples,
+                       'hits_1': hits_1 / total_examples, 'hits_3': hits_3 / total_examples,
                        'hits_5': hits_5 / total_examples, 'hits_10': hits_10 / total_examples,
                        'mrr': mrr / total_examples, 'total_examples': total_examples, 'non_zero_ctr': non_zero_ctr,
-                       'all_zero_ctr': self.all_zero_ctr, 'avg_num_nn': np.mean(self.all_num_ret_nn),
                        'avg_num_prog': np.mean(num_programs), 'avg_num_ans': np.mean(num_answers),
-                       'avg_num_failed_prog': np.mean(self.num_non_executable_programs), 'acc_loose': np.mean(all_acc)})
+                       'avg_num_failed_prog': np.mean(num_non_executable_programs), 'acc_loose': np.mean(all_acc)})
+
+
+def load_json_dset(filenm):
+    with open(filenm) as fin_:
+        dset_ = json.load(fin_)
+    return dset_
 
 
 def main(args):
-    dataset_name = args.dataset_name
-    logger.info("==========={}============".format(dataset_name))
-    data_dir = os.path.join(args.data_dir, "data", dataset_name)
-    subgraph_dir = os.path.join(args.data_dir, "subgraphs", dataset_name)
-    kg_file = os.path.join(data_dir, "graph.txt")
+    data_dir = args.data_dir
 
-    args.dev_file = os.path.join(data_dir, "dev.txt")
-    args.test_file = os.path.join(data_dir, "test.txt") if not args.test_file_name \
+    args.dev_file = os.path.join(data_dir, "dev.json")
+    args.test_file = os.path.join(data_dir, "test.json") if not args.test_file_name \
         else os.path.join(data_dir, args.test_file_name)
-    if args.dataset_name == "FB122":
-        args.test_file = os.path.join(data_dir, "testI.txt")
+    args.train_file = os.path.join(data_dir, "train.json")
 
-    args.train_file = os.path.join(data_dir, "train.txt")
-
-    logger.info("Loading subgraph around entities:")
-    with open(os.path.join(subgraph_dir, args.subgraph_file_name), "rb") as fin:
-        all_paths = pickle.load(fin)
-
-    entity_vocab, rev_entity_vocab, rel_vocab, rev_rel_vocab = create_vocab(kg_file)
-    logger.info("Loading train map")
-    train_map = load_data(kg_file)
-    logger.info("Loading dev map")
-    dev_map = load_data(args.dev_file)
-    logger.info("Loading test map")
-    test_map = load_data(args.test_file)
-    eval_map = dev_map
-    eval_file = args.dev_file
-    if args.test:
-        eval_map = test_map
-        eval_file = args.test_file
-
-    rel_ent_map = get_entities_group_by_relation(args.train_file)
-    # Calculate nearest neighbors
-    adj_mat = read_graph(kg_file, entity_vocab, rel_vocab)
-    adj_mat = np.sqrt(adj_mat)
-    l2norm = np.linalg.norm(adj_mat, axis=-1)
-    l2norm[0] += np.finfo(np.float).eps  # to encounter zero values. These 2 indx are PAD / NULL
-    l2norm[1] += np.finfo(np.float).eps
-    adj_mat = adj_mat / l2norm.reshape(l2norm.shape[0], 1)
-
-    # Lets put this to GPU
-    adj_mat = torch.from_numpy(adj_mat)
-
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(device)
-    logger.info('Using device:'.format(device.__str__()))
-    adj_mat = adj_mat.to(device)
-
-    # get the unique entities in eval set, so that we can calculate similarity in advance.
-    eval_entities = get_unique_entities(eval_file)
-    eval_vocab, eval_rev_vocab = {}, {}
-    query_ind = []
-
-    e_ctr = 0
-    for e in eval_entities:
-        try:
-            query_ind.append(entity_vocab[e])
-        except KeyError:
-            continue
-        eval_vocab[e] = e_ctr
-        eval_rev_vocab[e_ctr] = e
-        e_ctr += 1
+    logger.info("Loading data:")
+    train_dset = load_json_dset(args.train_file)
+    dev_dset = load_json_dset(args.dev_file)
+    test_dset = load_json_dset(args.test_file)
 
     logger.info("=========Config:============")
     logger.info(json.dumps(vars(args), indent=4, sort_keys=True))
 
-    logger.info("Loading combined train/dev/test map for filtered eval")
-    all_kg_map = load_data_all_triples(args.train_file, args.dev_file, args.test_file)
-    args.all_kg_map = all_kg_map
-
-    symbolically_smart_agent = CBR(args, train_map, eval_map, entity_vocab, rev_entity_vocab, rel_vocab,
-                                                 rev_rel_vocab, eval_vocab, eval_rev_vocab, all_paths, rel_ent_map)
-
-    query_ind = torch.LongTensor(query_ind).to(device)
-    # Calculate similarity
-    sim = symbolically_smart_agent.calc_sim(adj_mat,
-                                            query_ind)  # n X N (n== size of dev_entities, N: size of all entities)
-
-    nearest_neighbor_1_hop = np.argsort(-sim.cpu(), axis=-1)
-    symbolically_smart_agent.set_nearest_neighbor_1_hop(nearest_neighbor_1_hop)
-
-    logger.info("Loaded...")
-
-    symbolically_smart_agent.do_symbolic_case_based_reasoning()
+    symbolically_smart_agent = CBR(args, train_dset, dev_dset, test_dset)
+    if args.train_paths_map is not None and os.path.exists(args.train_paths_map):
+        with open(args.train_paths_map, 'rb') as fin:
+            train_paths_map = pickle.load(fin)
+        symbolically_smart_agent.set_paths_map(train_paths_map)
+    symbolically_smart_agent.do_symbolic_case_based_reasoning(do_predict=args.test)
+    if args.train_paths_map is None or os.path.exists(args.train_paths_map):
+        if not os.path.exists(args.output_dir):
+            os.makedirs(args.output_dir)
+        with open(os.path.join(args.output_dir, "train_paths_map.pkl"), 'wb') as fout:
+            pickle.dump(symbolically_smart_agent.train_paths_map, fout)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Collect subgraphs around entities")
-    parser.add_argument("--dataset_name", type=str, help="The dataset name. Replace with one of FB122 | WN18RR | NELL-995 to reproduce the results of the paper")
     parser.add_argument("--data_dir", type=str, default="./cbr-akbc-data/")
-    parser.add_argument("--subgraph_file_name", type=str,
-                        default="paths_1000.pkl")
+    parser.add_argument("--train_paths_map", type=str, default=None)
+    parser.add_argument("--output_dir", type=str, default="./outputs/")
     parser.add_argument("--test", action="store_true")
     parser.add_argument("--test_file_name", type=str, default='')
     parser.add_argument("--max_num_programs", type=int, default=15, help="Max number of paths to consider")
@@ -451,6 +371,10 @@ if __name__ == '__main__':
                         help="Number of nearest neighbors to consider based on adjacency matrix")
     parser.add_argument("--use_wandb", type=int, choices=[0, 1], default=0, help="Set to 1 if using W&B")
     parser.add_argument("--output_per_relation_scores", action="store_true")
+    # Path collection args
+    parser.add_argument("--add_inverse_edges_to_subg", type=int, default=1)
+    parser.add_argument("--num_paths_to_collect", type=int, default=1000)
+    parser.add_argument("--ignore_sequential_inverse", type=int, choices=[0, 1], default=1)
 
     args = parser.parse_args()
     logger.info('COMMAND: %s' % ' '.join(sys.argv))

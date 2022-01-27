@@ -2,22 +2,13 @@ from tqdm import tqdm
 from collections import defaultdict
 import os
 import numpy as np
-from data_utils import create_vocab, load_data, load_mid2str, get_unique_entities, create_adj_list, get_inv_relation
+from code.data.data_utils import get_unique_entities, create_adj_list, get_inv_relation
 import time
 import pickle
 import argparse
 import json
 import wandb
 import logging
-
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO)
-formatter = logging.Formatter("[%(asctime)s \t %(message)s]",
-                              "%Y-%m-%d %H:%M:%S")
-ch.setFormatter(formatter)
-logger.addHandler(ch)
 
 
 def get_paths(args, train_adj_list, start_node, max_len=3):
@@ -34,11 +25,11 @@ def get_paths(args, train_adj_list, start_node, max_len=3):
         prev_rel = None
         curr_node = start_node
         for l in range(max_len):
-            outgoing_edges = train_adj_list[curr_node]
+            outgoing_edges = train_adj_list.get(curr_node, [])
             if args.ignore_sequential_inverse:
                 # make sure we dont take inv of a prev edge
                 if prev_rel is not None:
-                    rev_prev_rel = get_inv_relation(prev_rel, args.dataset_name)
+                    rev_prev_rel = get_inv_relation(prev_rel)
                     temp = []
                     for oe in outgoing_edges:
                         if oe[0] == rev_prev_rel:
@@ -60,6 +51,15 @@ def get_paths(args, train_adj_list, start_node, max_len=3):
 
 
 def main(args):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO)
+    formatter = logging.Formatter("[%(asctime)s \t %(message)s]",
+                                  "%Y-%m-%d %H:%M:%S")
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
     logger.info("============={}================".format(args.dataset_name))
     data_dir = os.path.join(args.data_dir, "data", args.dataset_name)
     out_dir = os.path.join(args.data_dir, "subgraphs", "unique_paths", args.dataset_name)

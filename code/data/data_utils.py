@@ -138,17 +138,11 @@ def get_entities_group_by_relation(file_name: str) -> DefaultDict[str, List[str]
     return rel_to_ent_map
 
 
-def get_inv_relation(r: str, dataset_name="nell") -> str:
-    if dataset_name == "nell":
-        if r[-4:] == "_inv":
-            return r[:-4]
-        else:
-            return r + "_inv"
+def get_inv_relation(r: str) -> str:
+    if r[-4:] == "_inv":
+        return r[:-4]
     else:
-        if r[:2] == "__" or r[:2] == "_/":
-            return r[1:]
-        else:
-            return "_" + r
+        return r + "_inv"
 
 
 def return_nearest_relation_str(sim_sorted_ind, rev_rel_vocab, rel, k=5):
