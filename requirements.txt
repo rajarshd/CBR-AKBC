@@ -6,7 +6,7 @@ docker-pycreds==0.4.0
 gitdb==4.0.5
 GitPython==3.1.13
 idna==2.10
-numpy==1.20.1
+numpy==1.22.0
 pathtools==0.1.2
 promise==2.3
 protobuf==3.14.0
